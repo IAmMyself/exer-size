@@ -3,8 +3,33 @@ const app = express()
 const bodyParser = require('body-parser')
 const path = require('path')
 const mongo = require('mongodb')
+const mongoose = require('mongoose')
 const url = process.env.MONGOLAB_URI
 const cors = require('cors')
+
+var Schema = mongoose.Schema;
+
+var exercisesSchema = new Schema({
+    userId: String,
+    description: String,
+    duration: Number,
+    date: {type: Date, default: Date.now}
+});
+
+var userSchema = new Schema({
+    username: String,
+    count: Number
+});
+
+var users = mongoose.model("users", userSchema);
+var exercises = mongoose.model("exercises", exercisesSchema);
+
+mongoose.connect(url, {
+    keepAlive: true
+});
+var db = mongoose.connection
+db.on('error', console.error.bind(console, 'connection error:'));
+
 
 app.use(cors())
 
@@ -20,134 +45,125 @@ app.get('/', (req, res) => {
 });
 
 app.get("/api/exercise/log", function(req, res) {
-    var username = req.query.username,
-        from = req.query.from,
-        to = req.query.to,
-        limit = req.query.limit,
+    var id = req.query.userId,
+        from = new Date(req.query.from),
+        to = new Date(req.query.to),
+        limit = Number(req.query.limit),
         temp = [];
 
-    if (username == undefined) {
+    if (id == undefined) {
         res.send({
             success: false,
-            error: "Username not specified"
+            error: "Id not specified"
         });
         res.end();
+
         return;
     }
 
-    mongo.connect(url, function(err, db) {
+
+
+
+
+    var query = {
+        "userId": id,
+        date: {}
+    },
+        options = {},
+        noFromTo = true;
+    if (from != "Invalid Date") {
+        query.date["$gte"] = from;
+        noFromTo = false;
+    }
+
+    if (to != "Invalid Date") {
+        query.date["$lte"] = to;
+        noFromTo = false;
+    }
+
+    if (!isNaN(limit)) {
+        options.limit = limit;
+    }
+  
+    if (noFromTo) {
+        delete query.date;
+    }
+
+    exercises.find(query, "-__v -_id", options, function(err, user) {
         if (err != undefined) {
             throw err;
         }
-        db.collection("users").find({
-            "_id": username
-        }).toArray(function(err, data) {
-            if (err != undefined) {
-                throw err;
-            }
-            if (data[0] == undefined) {
-                res.send({
-                    success: false,
-                    error: "Username not found in database."
-                });
-            } else {
+        if (user == null) {
+            res.send({
+                success: false,
+                error: "Id not found in database."
+            });
+        } else {
+            res.send(user);
+        }
+        res.end();
 
-                if (from != undefined) {
-                    from = from.split("-");
-                    if (isNaN(from[0]) || isNaN(from[1]) || isNaN(from[2])) {
-                        res.send({
-                            success: false,
-                            error: "From should be yyyy-mm-dd"
-                        });
-                        res.end();
-                        return;
-                    }
-                    for (var i = 0; i < data[0].exercises.length; i++) {
-                        var date = data[0].exercises[i].date.split("-");
-                        if (date[0] > from[0] || (date[0] == from[0] && date[1] > from[1] || (date[0] == from[0] && date[1] == from[1] && date[2] >= from[2]))) {
-                            temp.push(data[0].exercises[i]);
-                        }
-                    }
-                    data[0].exercises = temp;
-                }
+        return;
+    })
+});
 
-                if (to != undefined) {
-                    temp = [];
-                    to = to.split("-");
+app.get("/api/exercise/users", function(req, res) {
 
-                    if (isNaN(to[0]) || isNaN(to[1]) || isNaN(to[2])) {
-                        res.send({
-                            success: false,
-                            error: "To should be yyyy-mm-dd"
-                        });
-                        res.end();
-                        return;
-                    }
 
-                    for (var i = 0; i < data[0].exercises.length; i++) {
-                        var date = data[0].exercises[i].date.split("-");
-                        if (date[0] < to[0] || (date[0] == to[0] && date[1] < to[1] || (date[0] == to[0] && date[1] == to[1] && date[2] <= to[2]))) {
-                            temp.push(data[0].exercises[i]);
-                        }
-                    }
-                    data[0].exercises = temp;
-                }
 
-                if (limit != undefined) {
-                    if (isNaN(limit)) {
-                        res.send({
-                            success: false,
-                            error: "limit should be number"
-                        });
-                        res.end();
-                        return;
-                    }
-                    data[0].exercises = data[0].exercises.slice(0, limit);
-                }
-                res.send(data[0]);
-            }
-            res.end();
-            return;
-        })
-    });
+
+    users.find({}, "-__v", function(err, data) {
+        if (err != undefined) {
+            throw err;
+        }
+        res.send(data);
+        res.end();
+
+        return;
+    })
 });
 
 app.post("/api/exercise/new-user", function(req, res) {
     var username = req.body.username;
 
     if (username != undefined) {
-        mongo.connect(url, function(err, db) {
-            if (err != undefined) {
-                throw err;
-            }
 
-            function insert() {
-                db.collection("users").insertOne({
-                    "_id": username,
-                    "exercises": []
-                })
-                res.send({
-                    "_id": username,
-                    "exercises": []
-                });
-                res.end()
-            }
 
-            db.collection("users").find({
-                "_id": username
-            }).toArray(function(err, data) {
+
+
+        function insert() {
+            var user = new users({
+                "username": username,
+                count: 0
+            }).save(function(err) {
                 if (err != undefined) {
                     throw err;
                 }
-                if (data[0] != undefined) {
-                    res.send({
-                        success: false,
-                        error: "Username already exists."
-                    })
-                } else {
-                    insert();
-                }
+                users.findOne({
+                    "username": username
+                }, "-count -__v" , function(err, user) {
+                    if (err != undefined) {
+                        throw err;
+                    }
+                    res.send(user);
+                });
             })
+        }
+
+        users.findOne({
+            "username": username
+        }, function(err, user) {
+            if (err != undefined) {
+                throw err;
+            }
+            if (user != null) {
+                res.send({
+                    success: false,
+                    error: "Username already exists."
+                })
+            } else {
+                insert();
+            }
         })
     } else {
         res.send({
@@ -155,23 +171,24 @@ app.post("/api/exercise/new-user", function(req, res) {
             error: "Username not defined."
         });
         res.end();
+
         return;
     }
 });
 
 app.post("/api/exercise/add", function(req, res) {
-    var username = req.body.username,
+    var id = req.body.userId,
         description = req.body.description,
         duration = req.body.duration,
-        date = req.body.date.split("-");
-  console.log(username == '');
+        date = new Date(req.body.date);
 
-    if (username == '') {
+    if (id == '') {
         res.send({
             success: false,
-            error: "Username not defined."
+            error: "Id not defined."
         });
         res.end();
+
         return;
     } else if (description == '') {
         res.send({
@@ -179,6 +196,7 @@ app.post("/api/exercise/add", function(req, res) {
             error: "Description not defined."
         });
         res.end();
+
         return;
     } else if (duration == '') {
         res.send({
@@ -186,24 +204,25 @@ app.post("/api/exercise/add", function(req, res) {
             error: "Duration not defined."
         });
         res.end();
+
         return;
-    } else if (isNaN(date[0]) || isNaN(date[1]) || isNaN(date[2])) {
-      date = undefined;
+    } else if (date == "Invalid Date") {
+        date = new Date();
     }
 
-    mongo.connect(url, function(err, db) {
+    users.findOne({
+        "_id": id
+    }, "-__v", function(err, data) {
         if (err != undefined) {
             throw err;
         }
-
-        function addExercise(exercises) {
-            db.collection("users").update({
-                "_id": username
-            }, {
-                $set: {
-                    exercises
-                }
-            }, function(err, status) {
+        if (data != null) {
+            var exercise = new exercises({
+                userId: data["_id"],
+                description: description,
+                duration: duration,
+                date: date
+            }).save(function(err) {
 
                 if (err != undefined) {
 
@@ -215,50 +234,34 @@ app.post("/api/exercise/add", function(req, res) {
                     });
 
                     res.end();
-                    return;
 
                 } else {
 
                     res.send({
-                        success: true
+                        _id: id,
+                        username: data.username,
+                        description: description,
+                        duration: duration,
+                        date: date
                     });
-
+              
                     res.end();
-                    return;
 
                 }
-
             });
+            data.count++;
+            data.save();
+        } else {
+            res.send({
+                success: false,
+                error: "Id not found."
+            });
+            res.end();
 
+            return;
         }
-
-        db.collection("users").find({
-            "_id": username
-        }).toArray(function(err, data) {
-            if (err != undefined) {
-                throw err;
-            }
-            if (data[0] != undefined) {
-                var exercises = data[0].exercises;
-                exercises.push({
-                    description: description,
-                    duration: duration
-                });
-                if (date != undefined) {
-                  exercises[exercises.length - 1].date = date;
-                }
-                addExercise(exercises);
-            } else {
-                res.send({
-                    success: false,
-                    error: "Username not found."
-                });
-                res.end();
-                return;
-            }
-        })
     })
-});
+})
 
 //Not Found middleware
 app.use((req, res, next) => {
